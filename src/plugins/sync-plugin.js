@@ -3,20 +3,17 @@
  */
 
 import { createMutex } from 'lib0/mutex.js'
-import * as PModel from 'prosemirror-model'
+import { Node as PMNode, Slice as PMSlice, Fragment as PMFragment, Schema as PMSchema } from 'prosemirror-model'
 import { Plugin, TextSelection } from 'prosemirror-state' // eslint-disable-line
-import * as math from 'lib0/math.js'
-import * as object from 'lib0/object.js'
-import * as set from 'lib0/set.js'
+import { min } from 'lib0/math.js'
+import { keys } from 'lib0/object.js'
 import { simpleDiff } from 'lib0/diff.js'
-import * as error from 'lib0/error.js'
+import { methodUnimplemented } from 'lib0/error.js'
 import { ySyncPluginKey } from './keys.js'
 import * as Y from 'yjs'
 import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition } from '../lib.js'
-import * as random from 'lib0/random.js'
-import * as environment from 'lib0/environment.js'
-import * as dom from 'lib0/dom.js'
-import * as fun from 'lib0/function.js'
+import { isBrowser } from 'lib0/environment.js'
+import { doc } from 'lib0/dom.js'
 
 /**
  * @param {Y.Item} item
@@ -26,7 +23,7 @@ export const isVisible = (item, snapshot) => snapshot === undefined ? !item.dele
 
 /**
  * Either a node if type is YXmlElement or an Array of text nodes if YXmlText
- * @typedef {Map<Y.AbstractType, PModel.Node | Array<PModel.Node>>} ProsemirrorMapping
+ * @typedef {Map<Y.AbstractType, PMNode | Array<PMNode>>} ProsemirrorMapping
  */
 
 /**
@@ -54,16 +51,10 @@ const defaultColors = [{ light: '#ecd44433', dark: '#ecd444' }]
  * @return {ColorDef}
  */
 const getUserColor = (colorMapping, colors, user) => {
-  // @todo do not hit the same color twice if possible
   if (!colorMapping.has(user)) {
-    if (colorMapping.size < colors.length) {
-      const usedColors = set.create()
-      colorMapping.forEach(color => usedColors.add(color))
-      colors = colors.filter(color => !usedColors.has(color))
-    }
-    colorMapping.set(user, random.oneOf(colors))
+    colorMapping.set(user, colors[colorMapping.size % colors.length]);
   }
-  return /** @type {ColorDef} */ (colorMapping.get(user))
+  return /** @type {ColorDef} */ (colorMapping.get(user));
 }
 
 /**
@@ -129,17 +120,16 @@ export const ySyncPlugin = (yXmlFragment, { colors = defaultColors, colorMapping
       }
     },
     view: view => {
-      const binding = new ProsemirrorBinding(yXmlFragment, view)
-      // Make sure this is called in a separate context
-      setTimeout(() => {
-        binding._forceRerender()
-        view.dispatch(view.state.tr.setMeta(ySyncPluginKey, { binding }))
-      }, 0)
+
+      const binding = new ProsemirrorBinding(yXmlFragment, view);
+      binding._forceRerender();
+      view.dispatch(view.state.tr.setMeta(ySyncPluginKey, { binding }));
+
       return {
         update: () => {
           const pluginState = plugin.getState(view.state)
           if (pluginState.snapshot == null && pluginState.prevSnapshot == null) {
-            if (changedInitialContent || !fun.equalityDeep(view.state.doc.type.createAndFill().content.toJSON(), view.state.doc.content.toJSON())) {
+            if (changedInitialContent || view.state.doc.content.findDiffStart(view.state.doc.type.createAndFill().content) != null) {
               changedInitialContent = true
               binding._prosemirrorChanged(view.state.doc)
             }
@@ -220,7 +210,7 @@ export class ProsemirrorBinding {
 
   _isLocalCursorInView () {
     if (!this.prosemirrorView.hasFocus()) return false
-    if (environment.isBrowser && this._domSelectionInView === null) {
+    if (isBrowser && this._domSelectionInView === null) {
       // Calculate the domSelectionInView and clear by next tick after all events are finished
       setTimeout(() => {
         this._domSelectionInView = null
@@ -249,7 +239,7 @@ export class ProsemirrorBinding {
     }
 
     const bounding = range.getBoundingClientRect()
-    const documentElement = dom.doc.documentElement
+    const documentElement = doc.documentElement
 
     return bounding.bottom >= 0 && bounding.right >= 0 &&
       bounding.left <= (window.innerWidth || documentElement.clientWidth || 0) &&
@@ -268,7 +258,7 @@ export class ProsemirrorBinding {
     this.mux(() => {
       const fragmentContent = this.type.toArray().map(t => createNodeFromYElement(/** @type {Y.XmlElement} */ (t), this.prosemirrorView.state.schema, this.mapping)).filter(n => n !== null)
       // @ts-ignore
-      const tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PModel.Slice(new PModel.Fragment(fragmentContent), 0, 0))
+      const tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PMSlice(new PMFragment(fragmentContent), 0, 0))
       tr.setMeta(ySyncPluginKey, { snapshot: null, prevSnapshot: null })
       this.prosemirrorView.dispatch(tr)
     })
@@ -277,10 +267,12 @@ export class ProsemirrorBinding {
   _forceRerender () {
     this.mapping = new Map()
     this.mux(() => {
-      const fragmentContent = this.type.toArray().map(t => createNodeFromYElement(/** @type {Y.XmlElement} */ (t), this.prosemirrorView.state.schema, this.mapping)).filter(n => n !== null)
-      // @ts-ignore
-      const tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PModel.Slice(new PModel.Fragment(fragmentContent), 0, 0))
-      this.prosemirrorView.dispatch(tr)
+      let content = this.type.toArray().map(t => createNodeFromYElement(/** @type {Y.XmlElement} */ (t), this.prosemirrorView.state.schema, this.mapping)).filter(n => n !== null);
+      if (content.length) {
+        // @ts-ignore
+        const tr = this.prosemirrorView.state.tr.replaceWith(0, this.prosemirrorView.state.doc.content.size, new PMFragment(content));
+        this.prosemirrorView.dispatch(tr);
+      }
     })
   }
 
@@ -324,7 +316,7 @@ export class ProsemirrorBinding {
           }
         }).filter(n => n !== null)
         // @ts-ignore
-        const tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PModel.Slice(new PModel.Fragment(fragmentContent), 0, 0))
+        const tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PMSlice(new PMFragment(fragmentContent), 0, 0))
         this.prosemirrorView.dispatch(tr)
       }, ySyncPluginKey)
     })
@@ -352,7 +344,7 @@ export class ProsemirrorBinding {
       transaction.changedParentTypes.forEach(delType)
       const fragmentContent = this.type.toArray().map(t => createNodeIfNotExists(/** @type {Y.XmlElement | Y.XmlHook} */ (t), this.prosemirrorView.state.schema, this.mapping)).filter(n => n !== null)
       // @ts-ignore
-      let tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PModel.Slice(new PModel.Fragment(fragmentContent), 0, 0))
+      let tr = this.prosemirrorView.state.tr.replaceWith(0, this.prosemirrorView.state.doc.content.size, new PMFragment(fragmentContent));
       restoreRelativeSelection(tr, this.beforeTransactionSelection, this)
       tr = tr.setMeta(ySyncPluginKey, { isChangeOrigin: true })
       if (this.beforeTransactionSelection !== null && this._isLocalCursorInView()) {
@@ -381,20 +373,20 @@ export class ProsemirrorBinding {
 /**
  * @private
  * @param {Y.XmlElement | Y.XmlHook} el
- * @param {PModel.Schema} schema
+ * @param {PMSchema} schema
  * @param {ProsemirrorMapping} mapping
  * @param {Y.Snapshot} [snapshot]
  * @param {Y.Snapshot} [prevSnapshot]
  * @param {function('removed' | 'added', Y.ID):any} [computeYChange]
- * @return {PModel.Node | null}
+ * @return {PMNode | null}
  */
 const createNodeIfNotExists = (el, schema, mapping, snapshot, prevSnapshot, computeYChange) => {
-  const node = /** @type {PModel.Node} */ (mapping.get(el))
+  const node = /** @type {PMNode} */ (mapping.get(el))
   if (node === undefined) {
     if (el instanceof Y.XmlElement) {
       return createNodeFromYElement(el, schema, mapping, snapshot, prevSnapshot, computeYChange)
     } else {
-      throw error.methodUnimplemented() // we are currently not handling hooks
+      throw methodUnimplemented() // we are currently not handling hooks
     }
   }
   return node
@@ -408,7 +400,7 @@ const createNodeIfNotExists = (el, schema, mapping, snapshot, prevSnapshot, comp
  * @param {Y.Snapshot} [snapshot]
  * @param {Y.Snapshot} [prevSnapshot]
  * @param {function('removed' | 'added', Y.ID):any} [computeYChange]
- * @return {PModel.Node | null} Returns node if node could be created. Otherwise it deletes the yjs type and returns null
+ * @return {PMNode | null} Returns node if node could be created. Otherwise it deletes the yjs type and returns null
  */
 const createNodeFromYElement = (el, schema, mapping, snapshot, prevSnapshot, computeYChange) => {
   const children = []
@@ -464,7 +456,7 @@ const createNodeFromYElement = (el, schema, mapping, snapshot, prevSnapshot, com
  * @param {Y.Snapshot} [snapshot]
  * @param {Y.Snapshot} [prevSnapshot]
  * @param {function('removed' | 'added', Y.ID):any} [computeYChange]
- * @return {Array<PModel.Node>|null}
+ * @return {Array<PMNode>|null}
  */
 const createTextNodesFromYText = (text, schema, mapping, snapshot, prevSnapshot, computeYChange) => {
   const nodes = []
@@ -528,7 +520,7 @@ const createTypeFromElementNode = (node, mapping) => {
 
 /**
  * @private
- * @param {PModel.Node|Array<PModel.Node>} node prosemirror text node
+ * @param {PMNode|Array<PMNode>} node prosemirror text node
  * @param {ProsemirrorMapping} mapping
  * @return {Y.XmlElement|Y.XmlText}
  */
@@ -547,7 +539,7 @@ const equalAttrs = (pattrs, yattrs) => {
 }
 
 /**
- * @typedef {Array<Array<PModel.Node>|PModel.Node>} NormalizedPNodeContent
+ * @typedef {Array<Array<PMNode>|PMNode>} NormalizedPNodeContent
  */
 
 /**
@@ -579,7 +571,7 @@ const normalizePNodeContent = pnode => {
  */
 const equalYTextPText = (ytext, ptexts) => {
   const delta = ytext.toDelta()
-  return delta.length === ptexts.length && delta.every((d, i) => d.insert === /** @type {any} */ (ptexts[i]).text && object.keys(d.attributes || {}).length === ptexts[i].marks.length && ptexts[i].marks.every(mark => equalAttrs(d.attributes[mark.type.name] || {}, mark.attrs)))
+  return delta.length === ptexts.length && delta.every((d, i) => d.insert === /** @type {any} */ (ptexts[i]).text && keys(d.attributes || {}).length === ptexts[i].marks.length && ptexts[i].marks.every(mark => equalAttrs(d.attributes[mark.type.name] || {}, mark.attrs)))
 }
 
 /**
@@ -595,14 +587,14 @@ const equalYTypePNode = (ytype, pnode) => {
 }
 
 /**
- * @param {PModel.Node | Array<PModel.Node> | undefined} mapped
- * @param {PModel.Node | Array<PModel.Node>} pcontent
+ * @param {PMNode | Array<PMNode> | undefined} mapped
+ * @param {PMNode | Array<PMNode>} pcontent
  */
 const mappedIdentity = (mapped, pcontent) => mapped === pcontent || (mapped instanceof Array && pcontent instanceof Array && mapped.length === pcontent.length && mapped.every((a, i) => pcontent[i] === a))
 
 /**
  * @param {Y.XmlElement} ytype
- * @param {PModel.Node} pnode
+ * @param {PMNode} pnode
  * @param {ProsemirrorMapping} mapping
  * @return {{ foundMappedChild: boolean, equalityFactor: number }}
  */
@@ -611,7 +603,7 @@ const computeChildEqualityFactor = (ytype, pnode, mapping) => {
   const pChildren = normalizePNodeContent(pnode)
   const pChildCnt = pChildren.length
   const yChildCnt = yChildren.length
-  const minCnt = math.min(yChildCnt, pChildCnt)
+  const minCnt = min(yChildCnt, pChildCnt)
   let left = 0
   let right = 0
   let foundMappedChild = false
@@ -726,7 +718,7 @@ export const updateYFragment = (y, yDomFragment, pNode, mapping) => {
   const pChildCnt = pChildren.length
   const yChildren = yDomFragment.toArray()
   const yChildCnt = yChildren.length
-  const minCnt = math.min(pChildCnt, yChildCnt)
+  const minCnt = min(pChildCnt, yChildCnt)
   let left = 0
   let right = 0
   // find number of matching elements from left
@@ -772,8 +764,8 @@ export const updateYFragment = (y, yDomFragment, pNode, mapping) => {
         let updateRight = rightY instanceof Y.XmlElement && matchNodeName(rightY, rightP)
         if (updateLeft && updateRight) {
           // decide which which element to update
-          const equalityLeft = computeChildEqualityFactor(/** @type {Y.XmlElement} */ (leftY), /** @type {PModel.Node} */ (leftP), mapping)
-          const equalityRight = computeChildEqualityFactor(/** @type {Y.XmlElement} */ (rightY), /** @type {PModel.Node} */ (rightP), mapping)
+          const equalityLeft = computeChildEqualityFactor(/** @type {Y.XmlElement} */ (leftY), /** @type {PMNode} */ (leftP), mapping)
+          const equalityRight = computeChildEqualityFactor(/** @type {Y.XmlElement} */ (rightY), /** @type {PMNode} */ (rightP), mapping)
           if (equalityLeft.foundMappedChild && !equalityRight.foundMappedChild) {
             updateRight = false
           } else if (!equalityLeft.foundMappedChild && equalityRight.foundMappedChild) {
@@ -785,10 +777,10 @@ export const updateYFragment = (y, yDomFragment, pNode, mapping) => {
           }
         }
         if (updateLeft) {
-          updateYFragment(y, /** @type {Y.XmlFragment} */ (leftY), /** @type {PModel.Node} */ (leftP), mapping)
+          updateYFragment(y, /** @type {Y.XmlFragment} */ (leftY), /** @type {PMNode} */ (leftP), mapping)
           left += 1
         } else if (updateRight) {
-          updateYFragment(y, /** @type {Y.XmlFragment} */ (rightY), /** @type {PModel.Node} */ (rightP), mapping)
+          updateYFragment(y, /** @type {Y.XmlFragment} */ (rightY), /** @type {PMNode} */ (rightP), mapping)
           right += 1
         } else {
           yDomFragment.delete(left, 1)
