@@ -1,7 +1,43 @@
-import { ProsemirrorMapping } from './plugins/sync-plugin.js' // eslint-disable-line
-
+import { updateYFragment} from './plugins/sync-plugin.js' // eslint-disable-line
 import * as Y from 'yjs'
+import { EditorView } from 'prosemirror-view' // eslint-disable-line
+import { Node, Schema } from 'prosemirror-model' // eslint-disable-line
 import * as error from 'lib0/error.js'
+import * as map from 'lib0/map.js'
+import * as eventloop from 'lib0/eventloop.js'
+
+/**
+ * Either a node if type is YXmlElement or an Array of text nodes if YXmlText
+ * @typedef {Map<Y.AbstractType, Node | Array<Node>>} ProsemirrorMapping
+ */
+
+/**
+ * Is null if no timeout is in progress.
+ * Is defined if a timeout is in progress.
+ * Maps from view
+ * @type {Map<EditorView, Map<any, any>>|null}
+ */
+let viewsToUpdate = null
+
+const updateMetas = () => {
+  const ups = /** @type {Map<EditorView, Map<any, any>>} */ (viewsToUpdate)
+  viewsToUpdate = null
+  ups.forEach((metas, view) => {
+    const tr = view.state.tr
+    metas.forEach((val, key) => {
+      tr.setMeta(key, val)
+    })
+    view.dispatch(tr)
+  })
+}
+
+export const setMeta = (view, key, value) => {
+  if (!viewsToUpdate) {
+    viewsToUpdate = new Map()
+    eventloop.timeout(0, updateMetas)
+  }
+  map.setIfUndefined(viewsToUpdate, view, map.create).set(key, value)
+}
 
 /**
  * Transforms a Prosemirror based absolute position to a Yjs Cursor (relative position in the Yjs model).
@@ -70,10 +106,21 @@ export const absolutePositionToRelativePosition = (pos, type, mapping) => {
       throw error.unexpectedCase()
     }
     if (pos === 0 && n.constructor !== Y.XmlText && n !== type) { // TODO: set to <= 0
-      return new Y.RelativePosition(n._item === null ? null : n._item.id, n._item === null ? Y.findRootTypeKey(n) : null, null)
+      return createRelativePosition(n._item.parent, n._item)
     }
   }
   return Y.createRelativePositionFromTypeIndex(type, type._length)
+}
+
+const createRelativePosition = (type, item) => {
+  let typeid = null
+  let tname = null
+  if (type._item === null) {
+    tname = Y.findRootTypeKey(type)
+  } else {
+    typeid = Y.createID(type._item.id.client, type._item.id.clock)
+  }
+  return new Y.RelativePosition(typeid, tname, item.id)
 }
 
 /**
@@ -81,10 +128,11 @@ export const absolutePositionToRelativePosition = (pos, type, mapping) => {
  * @param {Y.XmlFragment} documentType Top level type that is bound to pView
  * @param {any} relPos Encoded Yjs based relative position
  * @param {ProsemirrorMapping} mapping
+ * @return {null|number}
  */
 export const relativePositionToAbsolutePosition = (y, documentType, relPos, mapping) => {
   const decodedPos = Y.createAbsolutePositionFromRelativePosition(relPos, y)
-  if (decodedPos === null || !Y.isParentOf(documentType, decodedPos.type._item)) {
+  if (decodedPos === null || (decodedPos.type !== documentType && !Y.isParentOf(documentType, decodedPos.type._item))) {
     return null
   }
   let type = decodedPos.type
@@ -134,4 +182,127 @@ export const relativePositionToAbsolutePosition = (y, documentType, relPos, mapp
     type = parent
   }
   return pos - 1 // we don't count the most outer tag, because it is a fragment
+}
+
+/**
+ * Utility method to convert a Prosemirror Doc Node into a Y.Doc.
+ *
+ * This can be used when importing existing content to Y.Doc for the first time,
+ * note that this should not be used to rehydrate a Y.Doc from a database once
+ * collaboration has begun as all history will be lost
+ *
+ * @param {Node} doc
+ * @param {string} xmlFragment
+ * @return {Y.Doc}
+ */
+export function prosemirrorToYDoc (doc, xmlFragment = 'prosemirror') {
+  const ydoc = new Y.Doc()
+  const type = ydoc.get(xmlFragment, Y.XmlFragment)
+  if (!type.doc) {
+    return ydoc
+  }
+
+  updateYFragment(type.doc, type, doc, new Map())
+  return type.doc
+}
+
+/**
+ * Utility method to convert Prosemirror compatible JSON into a Y.Doc.
+ *
+ * This can be used when importing existing content to Y.Doc for the first time,
+ * note that this should not be used to rehydrate a Y.Doc from a database once
+ * collaboration has begun as all history will be lost
+ *
+ * @param {Schema} schema
+ * @param {any} state
+ * @param {string} xmlFragment
+ * @return {Y.Doc}
+ */
+export function prosemirrorJSONToYDoc (schema, state, xmlFragment = 'prosemirror') {
+  const doc = Node.fromJSON(schema, state)
+  return prosemirrorToYDoc(doc, xmlFragment)
+}
+
+/**
+ * Utility method to convert a Y.Doc to a Prosemirror Doc node.
+ *
+ * @param {Schema} schema
+ * @param {Y.Doc} ydoc
+ * @return {Node}
+ */
+export function yDocToProsemirror (schema, ydoc) {
+  const state = yDocToProsemirrorJSON(ydoc)
+  return Node.fromJSON(schema, state)
+}
+
+/**
+ * Utility method to convert a Y.Doc to Prosemirror compatible JSON.
+ *
+ * @param {Y.Doc} ydoc
+ * @param {string} xmlFragment
+ * @return {Record<string, any>}
+ */
+export function yDocToProsemirrorJSON (
+  ydoc,
+  xmlFragment = 'prosemirror'
+) {
+  const items = ydoc.getXmlFragment(xmlFragment).toArray()
+
+  function serialize (item) {
+    /**
+     * @type {Object} NodeObject
+     * @property {string} NodeObject.type
+     * @property {Record<string, string>=} NodeObject.attrs
+     * @property {Array<NodeObject>=} NodeObject.content
+     */
+    let response
+
+    // TODO: Must be a better way to detect text nodes than this
+    if (!item.nodeName) {
+      const delta = item.toDelta()
+      response = delta.map((d) => {
+        const text = {
+          type: 'text',
+          text: d.insert
+        }
+
+        if (d.attributes) {
+          text.marks = Object.keys(d.attributes).map((type) => {
+            const attrs = d.attributes[type]
+            const mark = {
+              type
+            }
+
+            if (Object.keys(attrs)) {
+              mark.attrs = attrs
+            }
+
+            return mark
+          })
+        }
+        return text
+      })
+    } else {
+      response = {
+        type: item.nodeName
+      }
+
+      const attrs = item.getAttributes()
+      if (Object.keys(attrs).length) {
+        response.attrs = attrs
+      }
+
+      const children = item.toArray()
+      if (children.length) {
+        response.content = children.map(serialize).flat()
+      }
+    }
+
+    return response
+  }
+
+  return {
+    type: 'doc',
+    content: items.map(serialize)
+  }
 }

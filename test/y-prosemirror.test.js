@@ -5,14 +5,58 @@ import * as math from 'lib0/math.js'
 import * as Y from 'yjs'
 import { applyRandomTests } from 'yjs/tests/testHelper.js'
 
-import { ySyncPlugin } from '../src/y-prosemirror.js'
+import { ySyncPlugin, prosemirrorJSONToYDoc, yDocToProsemirrorJSON } from '../src/y-prosemirror.js'
 import { EditorState, TextSelection } from 'prosemirror-state'
 import { EditorView } from 'prosemirror-view'
-import { schema } from 'prosemirror-schema-basic'
+import * as basicSchema from 'prosemirror-schema-basic'
 import { findWrapping } from 'prosemirror-transform'
+import { schema as complexSchema } from './complexSchema.js'
+
+const schema = /** @type {any} */ (basicSchema.schema)
+
+/**
+ * @param {t.TestCase} tc
+ */
+export const testDocTransformation = tc => {
+  const view = createNewProsemirrorView(new Y.Doc())
+  view.dispatch(view.state.tr.insert(0, /** @type {any} */ (schema.node('paragraph', undefined, schema.text('hello world')))))
+  const stateJSON = view.state.doc.toJSON()
+  // test if transforming back and forth from Yjs doc works
+  const backandforth = yDocToProsemirrorJSON(prosemirrorJSONToYDoc(/** @type {any} */ (schema), stateJSON))
+  t.compare(stateJSON, backandforth)
+}
+
+/**
+ * @param {t.TestCase} tc
+ */
+export const testEmptyNotSync = tc => {
+  const ydoc = new Y.Doc()
+  const type = ydoc.getXmlFragment('prosemirror')
+  const view = createNewComplexProsemirrorView(ydoc)
+  t.assert(type.toString() === '', 'should only sync after first change')
+
+  view.dispatch(
+    view.state.tr.setNodeMarkup(0, undefined, {
+      checked: true
+    })
+  )
+  t.compareStrings(type.toString(), '<custom checked="true"></custom><paragraph></paragraph>')
+}
+
+const createNewComplexProsemirrorView = y => {
+  const view = new EditorView(null, {
+    // @ts-ignore
+    state: EditorState.create({
+      schema: complexSchema,
+      plugins: [ySyncPlugin(y.get('prosemirror', Y.XmlFragment))]
+    })
+  })
+  return view
+}
 
 const createNewProsemirrorView = y => {
   const view = new EditorView(null, {
+    // @ts-ignore
     state: EditorState.create({
       schema,
       plugins: [ySyncPlugin(y.get('prosemirror', Y.XmlFragment))]

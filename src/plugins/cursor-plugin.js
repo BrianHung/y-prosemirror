@@ -1,26 +1,36 @@
 
 import * as Y from 'yjs'
 import { Decoration, DecorationSet } from 'prosemirror-view' // eslint-disable-line
-import { Plugin, PluginKey } from 'prosemirror-state' // eslint-disable-line
+import { Plugin } from 'prosemirror-state' // eslint-disable-line
 import { Awareness } from 'y-protocols/awareness.js' // eslint-disable-line
-import { ySyncPluginKey } from './sync-plugin.js'
-import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition } from '../lib.js'
+import { absolutePositionToRelativePosition, relativePositionToAbsolutePosition, setMeta } from '../lib.js'
+import { yCursorPluginKey, ySyncPluginKey } from './keys.js'
 
 import * as math from 'lib0/math.js'
 
 /**
- * The unique prosemirror plugin key for cursorPlugin.type
+ * Default generator for a cursor element
  *
- * @public
+ * @param {any} user user data
+ * @return HTMLElement
  */
-export const yCursorPluginKey = new PluginKey('yjs-cursor')
+export const defaultCursorBuilder = user => {
+  const cursor = document.createElement('span')
+  cursor.classList.add('ProseMirror-yjs-cursor')
+  cursor.setAttribute('style', `border-color: ${user.color}`)
+  const userDiv = document.createElement('div')
+  userDiv.setAttribute('style', `background-color: ${user.color}`)
+  userDiv.insertBefore(document.createTextNode(user.name), null)
+  cursor.insertBefore(userDiv, null)
+  return cursor
+}
 
 /**
  * @param {any} state
  * @param {Awareness} awareness
  * @return {any} DecorationSet
  */
-export const createDecorations = (state, awareness) => {
+export const createDecorations = (state, awareness, createCursor) => {
   const ystate = ySyncPluginKey.getState(state)
   const y = ystate.doc
   const decorations = []
@@ -33,7 +43,7 @@ export const createDecorations = (state, awareness) => {
       return
     }
     if (aw.cursor != null) {
-      let user = aw.user || {}
+      const user = aw.user || {}
       if (user.color == null) {
         user.color = '#ffa500'
       }
@@ -43,19 +53,10 @@ export const createDecorations = (state, awareness) => {
       let anchor = relativePositionToAbsolutePosition(y, ystate.type, Y.createRelativePositionFromJSON(aw.cursor.anchor), ystate.binding.mapping)
       let head = relativePositionToAbsolutePosition(y, ystate.type, Y.createRelativePositionFromJSON(aw.cursor.head), ystate.binding.mapping)
       if (anchor !== null && head !== null) {
-        let maxsize = math.max(state.doc.content.size - 1, 0)
+        const maxsize = math.max(state.doc.content.size - 1, 0)
         anchor = math.min(anchor, maxsize)
         head = math.min(head, maxsize)
-        decorations.push(Decoration.widget(head, () => {
-          const cursor = document.createElement('span')
-          cursor.classList.add('ProseMirror-yjs-cursor')
-          cursor.setAttribute('style', `border-color: ${user.color}`)
-          const userDiv = document.createElement('div')
-          userDiv.setAttribute('style', `background-color: ${user.color}`)
-          userDiv.insertBefore(document.createTextNode(user.name), null)
-          cursor.insertBefore(userDiv, null)
-          return cursor
-        }, { key: clientId + '', side: 10 }))
+        decorations.push(Decoration.widget(head, () => createCursor(user), { key: clientId + '', side: 10 }))
         const from = math.min(anchor, head)
         const to = math.max(anchor, head)
         decorations.push(Decoration.inline(from, to, { style: `background-color: ${user.color}70` }, { inclusiveEnd: true, inclusiveStart: false }))
@@ -71,19 +72,23 @@ export const createDecorations = (state, awareness) => {
  *
  * @public
  * @param {Awareness} awareness
+ * @param {object} [opts]
+ * @param {function(any):HTMLElement} [opts.cursorBuilder]
+ * @param {function(any):any} [opts.getSelection]
+ * @param {string} [opts.cursorStateField] By default all editor bindings use the awareness 'cursor' field to propagate cursor information.
  * @return {any}
  */
-export const yCursorPlugin = awareness => new Plugin({
+export const yCursorPlugin = (awareness, { cursorBuilder = defaultCursorBuilder, getSelection = state => state.selection } = {}, cursorStateField = 'cursor') => new Plugin({
   key: yCursorPluginKey,
   state: {
     init (_, state) {
-      return createDecorations(state, awareness)
+      return createDecorations(state, awareness, cursorBuilder)
     },
     apply (tr, prevState, oldState, newState) {
       const ystate = ySyncPluginKey.getState(newState)
       const yCursorState = tr.getMeta(yCursorPluginKey)
       if ((ystate && ystate.isChangeOrigin) || (yCursorState && yCursorState.awarenessUpdated)) {
-        return createDecorations(newState, awareness)
+        return createDecorations(newState, awareness, cursorBuilder)
       }
       return prevState.map(tr.mapping, tr.doc)
     }
@@ -95,33 +100,33 @@ export const yCursorPlugin = awareness => new Plugin({
   },
   view: view => {
     const awarenessListener = () => {
-      setTimeout(() => {
-        // @ts-ignore
-        if (view.docView) {
-          view.dispatch(view.state.tr.setMeta(yCursorPluginKey, { awarenessUpdated: true }))
-        }
-      })
+      // @ts-ignore
+      if (view.docView) {
+        setMeta(view, yCursorPluginKey, { awarenessUpdated: true })
+      }
     }
     const updateCursorInfo = () => {
       const ystate = ySyncPluginKey.getState(view.state)
       // @note We make implicit checks when checking for the cursor property
       const current = awareness.getLocalState() || {}
       if (view.hasFocus() && ystate.binding !== null) {
+        const selection = getSelection(view.state)
         /**
          * @type {Y.RelativePosition}
          */
-        const anchor = absolutePositionToRelativePosition(view.state.selection.anchor, ystate.type, ystate.binding.mapping)
+        const anchor = absolutePositionToRelativePosition(selection.anchor, ystate.type, ystate.binding.mapping)
         /**
          * @type {Y.RelativePosition}
          */
-        const head = absolutePositionToRelativePosition(view.state.selection.head, ystate.type, ystate.binding.mapping)
+        const head = absolutePositionToRelativePosition(selection.head, ystate.type, ystate.binding.mapping)
         if (current.cursor == null || !Y.compareRelativePositions(Y.createRelativePositionFromJSON(current.cursor.anchor), anchor) || !Y.compareRelativePositions(Y.createRelativePositionFromJSON(current.cursor.head), head)) {
-          awareness.setLocalStateField('cursor', {
+          awareness.setLocalStateField(cursorStateField, {
             anchor, head
           })
         }
-      } else if (current.cursor != null) {
-        awareness.setLocalStateField('cursor', null)
+      } else if (current.cursor != null && relativePositionToAbsolutePosition(ystate.doc, ystate.type, Y.createRelativePositionFromJSON(current.cursor.anchor), ystate.binding.mapping) !== null) {
+        // delete cursor information if current cursor information is owned by this editor binding
+        awareness.setLocalStateField(cursorStateField, null)
       }
     }
     awareness.on('change', awarenessListener)
@@ -130,8 +135,10 @@ export const yCursorPlugin = awareness => new Plugin({
     return {
       update: updateCursorInfo,
       destroy: () => {
+        view.dom.removeEventListener('focusin', updateCursorInfo)
+        view.dom.removeEventListener('focusout', updateCursorInfo)
         awareness.off('change', awarenessListener)
-        awareness.setLocalStateField('cursor', null)
+        awareness.setLocalStateField(cursorStateField, null)
       }
     }
   }

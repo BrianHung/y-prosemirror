@@ -1,37 +1,14 @@
 import nodeResolve from '@rollup/plugin-node-resolve'
 import commonjs from '@rollup/plugin-commonjs'
 
-const customModules = new Set([
-  'y-websocket',
-  'y-codemirror',
-  'y-ace',
-  'y-textarea',
-  'y-quill',
-  'y-dom',
-  'y-prosemirror'
-])
 /**
- * @type {Set<any>}
+ * in order to use Yjs' testing framework, we need to depend on the bare-bone (untransformed) Yjs bundle
  */
-const customLibModules = new Set([
-  'lib0',
-  'y-protocols'
-])
 const debugResolve = {
   resolveId (importee) {
-    if (importee === 'yjs/tests/testHelper.js') {
-      return `${process.cwd()}/../yjs/tests/testHelper.js`
-    }
     if (importee === 'yjs') {
-      return `${process.cwd()}/../yjs/src/index.js`
+      return `${process.cwd()}/node_modules/yjs/src/index.js`
     }
-    if (customModules.has(importee.split('/')[0])) {
-      return `${process.cwd()}/../${importee}/src/${importee}.js`
-    }
-    if (customLibModules.has(importee.split('/')[0])) {
-      return `${process.cwd()}/../${importee}`
-    }
-    return null
   }
 }
 
@@ -63,6 +40,20 @@ export default [{
   },
   plugins: [
     debugResolve,
+    nodeResolve({
+      mainFields: ['module', 'browser', 'main']
+    }),
+    commonjs()
+  ]
+}, {
+  input: './demo/prosemirror.js',
+  output: {
+    name: 'demo',
+    file: 'demo/dist/prosemirror.js',
+    format: 'iife',
+    sourcemap: true
+  },
+  plugins: [
     nodeResolve({
       mainFields: ['module', 'browser', 'main']
     }),

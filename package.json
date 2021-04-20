@@ -1,18 +1,23 @@
 {
   "name": "y-prosemirror",
-  "version": "0.3.2",
+  "version": "1.0.8",
   "description": "Prosemirror bindings for Yjs",
   "main": "./dist/y-prosemirror.cjs",
   "module": "./src/y-prosemirror.js",
   "types": "./dist/src/y-prosemirror.d.ts",
   "sideEffects": false,
+  "funding": {
+    "type": "GitHub Sponsors ❤",
+    "url": "https://github.com/sponsors/dmonad"
+  },
   "scripts": {
     "dist": "rm -rf dist && rollup -c && tsc",
-    "test": "rollup -c && node dist/test.cjs",
-    "lint": "standard",
+    "test": "npm run lint && rollup -c && node dist/test.cjs",
+    "lint": "standard && tsc",
     "watch": "rollup -wc",
     "debug": "concurrently 'http-server -o test.html' 'npm run watch'",
-    "preversion": "npm run lint && npm run dist && npm run test"
+    "preversion": "npm run lint && npm run dist && npm run test",
+    "start": "concurrently 'http-server -o demo/prosemirror.html' 'npm run watch'"
   },
   "files": [
     "dist/*",
@@ -39,30 +44,32 @@
   },
   "homepage": "https://github.com/yjs/y-prosemirror#readme",
   "dependencies": {
-    "lib0": "^0.2.15"
+    "lib0": "^0.2.34"
   },
   "peerDependencies": {
-    "yjs": "^13.0.0",
-    "y-protocols": "^0.2.0",
+    "yjs": "^13.3.2",
+    "y-protocols": "^1.0.1",
     "prosemirror-model": "^1.7.1",
     "prosemirror-state": "^1.2.3",
     "prosemirror-view": "^1.9.10"
   },
   "devDependencies": {
-    "@rollup/plugin-commonjs": "^11.0.1",
-    "@rollup/plugin-node-resolve": "^7.0.0",
-    "@types/prosemirror-state": "^1.2.3",
+    "@rollup/plugin-commonjs": "^15.1.0",
+    "@rollup/plugin-node-resolve": "^9.0.0",
+    "@types/prosemirror-state": "^1.2.5",
     "concurrently": "^4.1.0",
-    "http-server": "^0.12.1",
+    "http-server": "^0.12.3",
     "jsdom": "^15.1.1",
-    "prosemirror-model": "^1.9.1",
-    "prosemirror-schema-basic": "^1.0.1",
-    "prosemirror-state": "^1.2.3",
-    "prosemirror-view": "^1.13.8",
-    "rollup": "^1.29.1",
+    "prosemirror-example-setup": "^1.1.2",
+    "prosemirror-model": "^1.12.0",
+    "prosemirror-schema-basic": "^1.1.2",
+    "prosemirror-state": "^1.3.3",
+    "prosemirror-view": "^1.16.1",
+    "rollup": "^2.33.1",
     "standard": "^12.0.1",
-    "typescript": "^3.7.5",
-    "y-protocols": "^0.2.0",
-    "yjs": "13.0.0"
+    "typescript": "^3.9.7",
+    "y-protocols": "^1.0.1",
+    "y-webrtc": "^10.1.6",
+    "yjs": "^13.4.3"
   }
 }
