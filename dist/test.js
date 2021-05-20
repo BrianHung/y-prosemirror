@@ -23911,6 +23911,7 @@
    * @property {Array<ColorDef>} [YSyncOpts.colors]
    * @property {Map<string,ColorDef>} [YSyncOpts.colorMapping]
    * @property {Y.PermanentUserData|null} [YSyncOpts.permanentUserData]
+   * @property {JSON|null} [YSyncOpts.initialContent]
    */
 
   /**
@@ -23939,7 +23940,7 @@
    * @param {YSyncOpts} opts
    * @return {any} Returns a prosemirror plugin that binds to this type
    */
-  const ySyncPlugin = (yXmlFragment, { colors = defaultColors, colorMapping = new Map(), permanentUserData = null } = {}) => {
+  const ySyncPlugin = (yXmlFragment, { colors = defaultColors, colorMapping = new Map(), permanentUserData = null, initialContent = null } = {}) => {
     let changedInitialContent = false;
     const plugin = new Plugin({
       props: {
@@ -23994,16 +23995,16 @@
         }
       },
       view: view => {
-
         const binding = new ProsemirrorBinding(yXmlFragment, view);
         binding._forceRerender();
-        view.dispatch(view.state.tr.setMeta(ySyncPluginKey, { binding }));
-
         return {
           update: () => {
             const pluginState = plugin.getState(view.state);
             if (pluginState.snapshot == null && pluginState.prevSnapshot == null) {
-              if (changedInitialContent || view.state.doc.content.findDiffStart(view.state.doc.type.createAndFill().content) != null) {
+              changedInitialContent = changedInitialContent || initialContent 
+                ? view.state.doc.content.findDiffStart(view.state.schema.nodeFromJSON(initialContent)) !== null 
+                : view.state.doc.content.findDiffStart(view.state.doc.type.createAndFill().content)    !== null;
+              if (changedInitialContent) {
                 changedInitialContent = true;
                 binding._prosemirrorChanged(view.state.doc);
               }
@@ -24141,12 +24142,12 @@
     _forceRerender () {
       this.mapping = new Map();
       this.mux(() => {
-        let content = this.type.toArray().map(t => createNodeFromYElement(/** @type {Y.XmlElement} */ (t), this.prosemirrorView.state.schema, this.mapping)).filter(n => n !== null);
-        if (content.length) {
-          // @ts-ignore
-          const tr = this.prosemirrorView.state.tr.replaceWith(0, this.prosemirrorView.state.doc.content.size, new Fragment(content));
-          this.prosemirrorView.dispatch(tr);
-        }
+        // const fragmentContent = this.type.toArray().map(t => createNodeFromYElement(/** @type {Y.XmlElement} */ (t), this.prosemirrorView.state.schema, this.mapping)).filter(n => n !== null)
+        // @ts-ignore
+        // const tr = this.prosemirrorView.state.tr.replace(0, this.prosemirrorView.state.doc.content.size, new PModel.Slice(new PModel.Fragment(fragmentContent), 0, 0))      const tr = this.prosemirrorView.state.tr
+        const tr = this.prosemirrorView.state.tr;
+        tr.setMeta(ySyncPluginKey, { binding: this });
+        this.prosemirrorView.dispatch(tr);
       });
     }
 

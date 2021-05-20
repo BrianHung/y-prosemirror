@@ -1,5 +1,5 @@
 export function isVisible(item: any, snapshot?: any): boolean;
-export function ySyncPlugin(yXmlFragment: any, { colors, colorMapping, permanentUserData }?: YSyncOpts): any;
+export function ySyncPlugin(yXmlFragment: any, { colors, colorMapping, permanentUserData, initialContent }?: YSyncOpts): any;
 export function getRelativeSelection(pmbinding: any, state: any): {
     anchor: any;
     head: any;
@@ -69,6 +69,7 @@ export type YSyncOpts = {
     colors?: Array<ColorDef>;
     colorMapping?: Map<string, ColorDef>;
     permanentUserData?: any | null;
+    initialContent?: JSON | null;
 };
 export type NormalizedPNodeContent = (PMNode<any> | PMNode<any>[])[];
 import { Node as PMNode } from "prosemirror-model";
